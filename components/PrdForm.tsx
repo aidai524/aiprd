@@ -4,16 +4,24 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { supabase } from '@/lib/supabase';
 import MdxContent from './MdxContent';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 
-interface Version {
+interface PrdVersion {
   id: string;
   created_at: string;
   generated_prd: string;
+  project_overview: string;
+  core_functions: string;
+  documentation: string;
+  file_structure: string;
+}
+
+interface PrdFormProps {
+  prdId?: string;
 }
 
 interface User {
@@ -21,38 +29,81 @@ interface User {
   email: string;
 }
 
-const PrdForm: React.FC = () => {
+const PrdForm: React.FC<PrdFormProps> = ({ prdId }) => {
+  const [title, setTitle] = useState('');
   const [projectOverview, setProjectOverview] = useState('');
   const [coreFunctions, setCoreFunctions] = useState('');
   const [documentation, setDocumentation] = useState('');
   const [fileStructure, setFileStructure] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [user, setUser] = useState<User | null>(null);
   const [streamedContent, setStreamedContent] = useState('');
+  const [versions, setVersions] = useState<PrdVersion[]>([]);
+  const [user, setUser] = useState<User | null>(null);
   const contentRef = useRef('');
   const [activeTab, setActiveTab] = useState("projectOverview");
 
   useEffect(() => {
     checkUser();
-    fetchVersions();
-  }, []);
+    if (prdId) {
+      fetchPrdData(prdId);
+      fetchVersions(prdId);
+    }
+  }, [prdId]);
 
   const checkUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    setUser(user as User | null);
+    if (user) {
+      setUser({ id: user.id, email: user.email ?? '' });
+    }
   };
 
-  const fetchVersions = async () => {
+  const fetchPrdData = async (id: string) => {
+    const { data, error } = await supabase
+      .from('prds')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error('Error fetching PRD:', error);
+    } else if (data) {
+      setTitle(data.title);
+      // 加载最新版本的内容
+      fetchLatestVersion(id);
+    }
+  };
+
+  const fetchLatestVersion = async (prdId: string) => {
     const { data, error } = await supabase
       .from('prd_versions')
       .select('*')
+      .eq('prd_id', prdId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      console.error('Error fetching latest PRD version:', error);
+    } else if (data) {
+      setProjectOverview(data.project_overview);
+      setCoreFunctions(data.core_functions);
+      setDocumentation(data.documentation);
+      setFileStructure(data.file_structure);
+      setStreamedContent(data.generated_prd);
+    }
+  };
+
+  const fetchVersions = async (prdId: string) => {
+    const { data, error } = await supabase
+      .from('prd_versions')
+      .select('*')
+      .eq('prd_id', prdId)
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Error fetching versions:', error);
+      console.error('Error fetching PRD versions:', error);
     } else {
-      setVersions(data as Version[]);
+      setVersions(data || []);
     }
   };
 
@@ -95,7 +146,31 @@ const PrdForm: React.FC = () => {
         setStreamedContent(contentRef.current);
       }
 
+      // 保存或更新 PRD
+      let savedPrdId = prdId;
+      if (!savedPrdId) {
+        const { data, error } = await supabase
+          .from('prds')
+          .insert({ title, user_id: user.id })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error creating PRD:', error);
+          return;
+        }
+        savedPrdId = data.id;
+      } else {
+        // 更新 PRD 标题
+        await supabase
+          .from('prds')
+          .update({ title, updated_at: new Date().toISOString() })
+          .eq('id', savedPrdId);
+      }
+
+      // 保存新版本
       const { error } = await supabase.from('prd_versions').insert({
+        prd_id: savedPrdId,
         project_overview: projectOverview,
         core_functions: coreFunctions,
         documentation,
@@ -104,9 +179,9 @@ const PrdForm: React.FC = () => {
       });
 
       if (error) {
-        console.error('Error saving version:', error);
-      } else {
-        fetchVersions();
+        console.error('Error saving PRD version:', error);
+      } else if (savedPrdId) {
+        fetchVersions(savedPrdId);
       }
     } catch (error) {
       console.error('Error generating PRD:', error);
@@ -132,6 +207,24 @@ const PrdForm: React.FC = () => {
     }
   };
 
+  const handleCopyContent = () => {
+    navigator.clipboard.writeText(streamedContent).then(() => {
+      alert('内容已复制到剪贴板');
+    }, (err) => {
+      console.error('无法复制内容: ', err);
+    });
+  };
+
+  const handleDownloadContent = () => {
+    const element = document.createElement("a");
+    const file = new Blob([streamedContent], {type: 'text/markdown'});
+    element.href = URL.createObjectURL(file);
+    element.download = "instruction.md";
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl">
       <Card className="mb-8">
@@ -140,6 +233,15 @@ const PrdForm: React.FC = () => {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <Label htmlFor="title">PRD 标题</Label>
+              <Input
+                id="title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+              />
+            </div>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid w-full grid-cols-4 mb-4">
                 <TabsTrigger value="projectOverview">项目概述</TabsTrigger>
@@ -184,7 +286,7 @@ const PrdForm: React.FC = () => {
                   value={fileStructure}
                   onChange={(e) => setFileStructure(e.target.value)}
                   className="min-h-[200px] w-full"
-                  placeholder="概述当前项目的文件结构，包括前端、后端和 API 详情。"
+                  placeholder="概述当前项目的文件结构，括前端、后端和 API 详情。"
                 />
               </TabsContent>
             </Tabs>
@@ -196,16 +298,18 @@ const PrdForm: React.FC = () => {
       </Card>
 
       {streamedContent && (
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="text-xl font-bold">生成的 PRD</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[400px] w-full rounded-md border p-4">
-              <MdxContent content={streamedContent} />
-            </ScrollArea>
-          </CardContent>
-        </Card>
+        <div className="mt-6">
+          <div className="flex justify-between items-center mb-2">
+            <h2 className="text-xl font-bold">生成的 PRD：</h2>
+            <div>
+              <Button onClick={handleCopyContent} className="mr-2">复制内容</Button>
+              <Button onClick={handleDownloadContent}>下载 Markdown</Button>
+            </div>
+          </div>
+          <div className="bg-gray-100 p-4 rounded-md overflow-auto max-h-[600px]">
+            <MdxContent content={streamedContent} />
+          </div>
+        </div>
       )}
 
       <Card>

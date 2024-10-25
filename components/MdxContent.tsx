@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown';
+import React from 'react';
 
 interface MdxContentProps {
   content: string;
@@ -7,7 +7,7 @@ interface MdxContentProps {
 const MdxContent: React.FC<MdxContentProps> = ({ content }) => {
   return (
     <div className="prose prose-sm sm:prose lg:prose-lg xl:prose-xl mx-auto">
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <pre className="whitespace-pre-wrap break-words">{content}</pre>
     </div>
   );
 };

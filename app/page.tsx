@@ -1,4 +1,4 @@
-import TweetGenerator from '@/components/TweetGenerator';
+import TweetGenerator from '@/src/components/TweetGenerator';
 
 export default function Home() {
   return (
